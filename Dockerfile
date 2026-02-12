@@ -30,7 +30,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     diffusers==0.31.0 \
     fastapi==0.115.5 \
     uvicorn==0.32.1 \
-    pydantic==2.10.3
+    pydantic==2.10.3 \
+    httpx==0.28.1
 
 # Clone and install kohya-ss sd-scripts
 RUN git clone --depth 1 https://github.com/kohya-ss/sd-scripts.git /kohya && \
