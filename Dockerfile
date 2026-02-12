@@ -33,8 +33,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pydantic==2.10.3
 
 # Clone and install kohya-ss sd-scripts
-RUN git clone https://github.com/kohya-ss/sd-scripts.git /workspace/kohya && \
-    cd /workspace/kohya && \
+RUN git clone --depth 1 https://github.com/kohya-ss/sd-scripts.git /kohya && \
+    cd /kohya && \
+    sed -i 's|file:///kohya/sd-scripts|.|g' requirements.txt && \
     pip install --no-cache-dir -r requirements.txt
 
 # Create model directory and download SDXL base model
