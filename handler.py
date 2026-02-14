@@ -16,6 +16,36 @@ FLUX_AE = "/workspace/models/ae.safetensors"
 FLUX_CLIP_L = "/workspace/models/clip_l.safetensors"
 FLUX_T5XXL = "/workspace/models/t5xxl_fp16.safetensors"
 
+# HuggingFace gated model URLs
+_GATED_MODELS = [
+    (FLUX_MODEL, "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors"),
+    (FLUX_AE, "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors"),
+]
+
+
+def ensure_gated_models():
+    """Download gated Flux Dev models at startup using HF_TOKEN env var."""
+    import subprocess
+    hf_token = os.environ.get("HF_TOKEN", "")
+    if not hf_token:
+        print("WARNING: HF_TOKEN not set, gated model downloads will fail")
+        return
+
+    for dest, url in _GATED_MODELS:
+        if os.path.exists(dest) and os.path.getsize(dest) > 1000:
+            print(f"Model already exists: {dest}")
+            continue
+        print(f"Downloading gated model: {url}")
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        result = subprocess.run([
+            "wget", "--progress=bar:force:noscroll",
+            "--header", f"Authorization: Bearer {hf_token}",
+            "-O", dest, url
+        ], timeout=3600)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to download {url} (exit {result.returncode})")
+        print(f"Downloaded: {dest} ({os.path.getsize(dest)} bytes)")
+
 
 def download_image(url: str, output_path: str):
     """Download and save image from URL."""
@@ -269,4 +299,5 @@ if __name__ == "__main__":
     print("POST to http://localhost:8000/runsync with training payload")
     uvicorn.run(app, host="0.0.0.0", port=8000)
 else:
+    ensure_gated_models()
     runpod.serverless.start({"handler": handler})
