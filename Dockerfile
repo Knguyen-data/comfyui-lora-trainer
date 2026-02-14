@@ -52,17 +52,13 @@ RUN mkdir -p /workspace/models
 # 4. t5xxl_fp16.safetensors (9.79 GB) - T5-XXL text encoder
 
 # Flux Dev base model (gated - needs HF_TOKEN)
-RUN --mount=type=secret,id=HF_TOKEN \
-    HF_TOKEN=$(cat /run/secrets/HF_TOKEN 2>/dev/null || echo "${HF_TOKEN}") && \
-    wget --progress=bar:force:noscroll \
+RUN wget --progress=bar:force:noscroll \
     --header="Authorization: Bearer ${HF_TOKEN}" \
     -O /workspace/models/flux1-dev.safetensors \
     "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors"
 
 # Flux VAE (ae.safetensors from same repo)
-RUN --mount=type=secret,id=HF_TOKEN \
-    HF_TOKEN=$(cat /run/secrets/HF_TOKEN 2>/dev/null || echo "${HF_TOKEN}") && \
-    wget --progress=bar:force:noscroll \
+RUN wget --progress=bar:force:noscroll \
     --header="Authorization: Bearer ${HF_TOKEN}" \
     -O /workspace/models/ae.safetensors \
     "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors"
