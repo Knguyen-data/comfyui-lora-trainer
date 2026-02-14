@@ -10,6 +10,12 @@ from botocore.client import Config
 from pathlib import Path
 from urllib.parse import urlparse
 
+# Flux Dev model paths (baked into Docker image)
+FLUX_MODEL = "/workspace/models/flux1-dev.safetensors"
+FLUX_AE = "/workspace/models/ae.safetensors"
+FLUX_CLIP_L = "/workspace/models/clip_l.safetensors"
+FLUX_T5XXL = "/workspace/models/t5xxl_fp16.safetensors"
+
 
 def download_image(url: str, output_path: str):
     """Download and save image from URL."""
@@ -32,54 +38,26 @@ def download_image(url: str, output_path: str):
     return filename
 
 
-def generate_toml_config(config: dict, training_data_dir: str) -> str:
-    """Generate kohya TOML configuration file."""
-
-    steps = config.get("steps", 1500)
-    lr = config.get("lr", 1e-4)
-    network_dim = config.get("network_dim", 32)
-    network_alpha = config.get("network_alpha", 16)
-    resolution = config.get("resolution", 1024)
-
+def generate_dataset_toml(training_data_dir: str, resolution: int) -> str:
+    """Generate kohya dataset TOML config for Flux training."""
     toml_config = {
         "general": {
-            "enable_bucket": True,
-            "bucket_reso_steps": 64,
-            "bucket_no_upscale": False,
+            "shuffle_caption": True,
+            "caption_extension": ".txt",
+            "keep_tokens": 1,
         },
-        "model_arguments": {
-            "pretrained_model_name_or_path": "/workspace/models/sd_xl_base_1.0.safetensors"
-        },
-        "dataset_arguments": {
+        "datasets": [{
             "resolution": resolution,
-            "train_data_dir": training_data_dir,
-            "enable_bucket": True,
-            "min_bucket_reso": 256,
-            "max_bucket_reso": 2048,
-        },
-        "training_arguments": {
-            "output_dir": "/tmp/output",
-            "output_name": "lora",
-            "save_model_as": "safetensors",
-            "max_train_steps": steps,
-            "learning_rate": lr,
-            "lr_scheduler": "cosine",
-            "lr_warmup_steps": 0,
-            "train_batch_size": 1,
-            "mixed_precision": "fp16",
-            "save_precision": "fp16",
-            "gradient_checkpointing": True,
-            "gradient_accumulation_steps": 1,
-            "optimizer_type": "AdamW8bit",
-            "network_module": "networks.lora",
-            "network_dim": network_dim,
-            "network_alpha": network_alpha,
-            "xformers": True,
-            "sdpa": False,
-        },
+            "batch_size": 1,
+            "keep_tokens": 1,
+            "subsets": [{
+                "image_dir": training_data_dir,
+                "num_repeats": 10,
+            }],
+        }],
     }
 
-    config_path = "/tmp/training_config.toml"
+    config_path = "/tmp/dataset_config.toml"
     with open(config_path, "w") as f:
         toml.dump(toml_config, f)
 
@@ -121,9 +99,9 @@ def find_output_lora() -> str:
 
 async def handler(event: dict) -> dict:
     """
-    RunPod handler for LoRA training.
+    RunPod handler for Flux Dev LoRA training via kohya-ss/sd-scripts.
 
-    Expected input format (from frontend lora-model-service.ts):
+    Expected input format:
     {
         "mode": "train_lora",
         "trigger_word": "ohwx",
@@ -145,16 +123,10 @@ async def handler(event: dict) -> dict:
         image_urls = input_data.get("training_images", [])
         steps = input_data.get("steps", 1000)
         learning_rate = input_data.get("learning_rate", 1e-4)
+        network_dim = input_data.get("network_dim", 16)
+        network_alpha = input_data.get("network_alpha", 8)
+        resolution = input_data.get("resolution", 1024)
         output_name = input_data.get("output_name", "lora")
-
-        config = {
-            "steps": steps,
-            "lr": learning_rate,
-            "network_dim": 32,
-            "network_alpha": 16,
-            "resolution": 1024,
-            "trigger_word": trigger_word,
-        }
 
         storage = {
             "r2_endpoint": os.environ.get("R2_ENDPOINT", ""),
@@ -188,19 +160,54 @@ async def handler(event: dict) -> dict:
                 with open(caption_path, "w") as f:
                     f.write(f"{trigger_word} person")
 
-        print("Generating training config...")
-        config_path = generate_toml_config(config, "/tmp/training_data")
+        print("Generating dataset config...")
+        dataset_config_path = generate_dataset_toml(training_data_dir, resolution)
 
-        print("Starting LoRA training...")
+        print("Starting Flux Dev LoRA training...")
         log_file = open("/tmp/training.log", "w")
 
+        # Flux Dev LoRA training via kohya flux_train_network.py
+        # Flags verified from kohya docs: docs/flux_train_network.md
         process = await asyncio.create_subprocess_exec(
             "accelerate",
             "launch",
             "--num_cpu_threads_per_process=1",
-            "/workspace/kohya/sdxl_train_network.py",
-            "--config_file",
-            config_path,
+            "/kohya/flux_train_network.py",
+            # Model paths
+            "--pretrained_model_name_or_path", FLUX_MODEL,
+            "--clip_l", FLUX_CLIP_L,
+            "--t5xxl", FLUX_T5XXL,
+            "--ae", FLUX_AE,
+            # Dataset
+            "--dataset_config", dataset_config_path,
+            # Output
+            "--output_dir", "/tmp/output",
+            "--output_name", output_name,
+            "--save_model_as", "safetensors",
+            # Training params
+            "--max_train_steps", str(steps),
+            "--learning_rate", str(learning_rate),
+            "--lr_scheduler", "cosine",
+            "--lr_warmup_steps", "0",
+            "--train_batch_size", "1",
+            "--mixed_precision", "bf16",
+            "--save_precision", "bf16",
+            "--gradient_checkpointing",
+            "--gradient_accumulation_steps", "1",
+            "--optimizer_type", "AdamW8bit",
+            # LoRA network config (Flux uses lora_flux, not lora)
+            "--network_module", "networks.lora_flux",
+            "--network_dim", str(network_dim),
+            "--network_alpha", str(network_alpha),
+            # Flux-specific flags (from kohya docs)
+            "--timestep_sampling", "flux_shift",
+            "--model_prediction_type", "raw",
+            "--guidance_scale", "1.0",
+            "--fp8_base",
+            "--cache_text_encoder_outputs",
+            "--cache_latents",
+            # Memory optimization: swap 18 blocks to CPU (fits 24GB VRAM)
+            "--blocks_to_swap", "18",
             stdout=log_file,
             stderr=asyncio.subprocess.STDOUT,
         )
