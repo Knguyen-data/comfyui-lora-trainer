@@ -102,6 +102,10 @@ def upload_to_r2(file_path: str, storage: dict) -> str:
 
     s3.upload_file(file_path, bucket, upload_path)
 
+    # Return public URL (R2 public access domain)
+    r2_public = storage.get("r2_public_url", "")
+    if r2_public:
+        return f"{r2_public.rstrip('/')}/{upload_path}"
     return f"{storage['r2_endpoint']}/{bucket}/{upload_path}"
 
 
@@ -157,6 +161,7 @@ async def handler(event: dict) -> dict:
             "r2_access_key": os.environ.get("R2_ACCESS_KEY", ""),
             "r2_secret_key": os.environ.get("R2_SECRET_KEY", ""),
             "r2_bucket": os.environ.get("R2_BUCKET", "lora-models"),
+            "r2_public_url": os.environ.get("R2_PUBLIC_URL", "https://pub-b96a8c9acdb44455af16952661f6d90a.r2.dev"),
             "upload_path": f"{output_name}.safetensors",
         }
 
